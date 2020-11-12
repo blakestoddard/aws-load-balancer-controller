@@ -2,6 +2,8 @@ package inject
 
 import (
 	"context"
+	"strings"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -13,7 +15,6 @@ import (
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/targetgroupbinding"
 	"sigs.k8s.io/aws-load-balancer-controller/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
 )
 
 // NewPodReadinessGate constructs new PodReadinessGate
@@ -71,6 +72,14 @@ func (m *PodReadinessGate) computeTargetHealthReadinessGateConditionTypes(ctx co
 			continue
 		}
 
+		podLabels := labels.Set(pod.Labels)
+
+		// pods created by a ReplicaSet have a label auto-added that will break
+		// the service select comparison below
+		if podLabels.Has("pod-template-hash") {
+			delete(podLabels, "pod-template-hash")
+		}
+
 		svcKey := types.NamespacedName{Namespace: tgb.Namespace, Name: tgb.Spec.ServiceRef.Name}
 		svc := &corev1.Service{}
 		if err := m.k8sClient.Get(ctx, svcKey, svc); err != nil {
@@ -87,7 +96,7 @@ func (m *PodReadinessGate) computeTargetHealthReadinessGateConditionTypes(ctx co
 		} else {
 			svcSelector = labels.SelectorFromSet(svc.Spec.Selector)
 		}
-		if svcSelector.Matches(labels.Set(pod.Labels)) {
+		if svcSelector.Matches(podLabels) {
 			targetHealthCondType := targetgroupbinding.BuildTargetHealthPodConditionType(&tgb)
 			targetHealthCondTypes = append(targetHealthCondTypes, targetHealthCondType)
 		}
